@@ -101,7 +101,7 @@ rust_backtester \
 ```bash
 rust_backtester \
   --trader /path/to/trader.py \
-  --dataset TUTORIAL_ROUND_1
+  --dataset datasets/tutorial
 ```
 
 ```bash
