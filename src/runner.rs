@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
@@ -212,8 +213,23 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
                 .get(product)
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
+            let original_market: Vec<Trade> = market_trades
+                .iter()
+                .map(|trade| Trade {
+                    symbol: product.clone(),
+                    price: trade.price,
+                    quantity: trade.quantity,
+                    buyer: trade.buyer.clone(),
+                    seller: trade.seller.clone(),
+                    timestamp: if trade.timestamp == 0 {
+                        tick.timestamp
+                    } else {
+                        trade.timestamp
+                    },
+                })
+                .collect();
 
-            let (symbol_own_trades, remaining_market, symbol_orders) = match_orders_for_symbol(
+            let (symbol_own_trades, _remaining_market, symbol_orders) = match_orders_for_symbol(
                 product,
                 orders_by_symbol.get(product).cloned().unwrap_or_default(),
                 &mut bids,
@@ -227,7 +243,7 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
             );
 
             if need_submission_log {
-                for trade in &remaining_market {
+                for trade in &original_market {
                     combined_trade_history.push(trade_history_json(trade));
                 }
                 for trade in &symbol_own_trades {
@@ -245,8 +261,8 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
                 own_trade_count += symbol_own_trades.len();
                 own_trades_tick.insert(product.clone(), symbol_own_trades);
             }
-            if !remaining_market.is_empty() {
-                market_trades_next.insert(product.clone(), remaining_market);
+            if !original_market.is_empty() {
+                market_trades_next.insert(product.clone(), original_market);
             }
         }
 
@@ -568,6 +584,16 @@ fn match_orders_for_symbol(
             },
         })
         .collect();
+    let mut buy_queue_remaining: HashMap<i64, i64> = bids
+        .iter()
+        .filter(|level| level.volume > 0)
+        .map(|level| (level.price, level.volume))
+        .collect();
+    let mut sell_queue_remaining: HashMap<i64, i64> = asks
+        .iter()
+        .filter(|level| level.volume > 0)
+        .map(|level| (level.price, level.volume))
+        .collect();
 
     for order in orders {
         let mut remaining = order.quantity;
@@ -645,6 +671,28 @@ fn match_orders_for_symbol(
                 ) {
                     continue;
                 }
+                if remaining > 0 && trade.price == order.price {
+                    if let Some(ahead) = buy_queue_remaining.get_mut(&order.price) {
+                        let consumed = trade.quantity.min(*ahead);
+                        trade.quantity -= consumed;
+                        *ahead -= consumed;
+                        if *ahead <= 0 {
+                            buy_queue_remaining.remove(&order.price);
+                        }
+                    }
+                } else if remaining < 0 && trade.price == order.price {
+                    if let Some(ahead) = sell_queue_remaining.get_mut(&order.price) {
+                        let consumed = trade.quantity.min(*ahead);
+                        trade.quantity -= consumed;
+                        *ahead -= consumed;
+                        if *ahead <= 0 {
+                            sell_queue_remaining.remove(&order.price);
+                        }
+                    }
+                }
+                if trade.quantity <= 0 {
+                    continue;
+                }
 
                 let fill = remaining.abs().min(trade.quantity);
                 let execution_price =
@@ -703,14 +751,14 @@ fn market_trade_duplicates_touch(
 ) -> bool {
     if trade.buyer == "SUBMISSION" {
         if let Some(best_ask) = best_ask {
-            if trade.price == best_ask {
+            if trade.price >= best_ask {
                 return true;
             }
         }
     }
     if trade.seller == "SUBMISSION" {
         if let Some(best_bid) = best_bid {
-            if trade.price == best_bid {
+            if trade.price <= best_bid {
                 return true;
             }
         }
@@ -1183,11 +1231,12 @@ fn indexmap_f64_to_json(values: &IndexMap<String, f64>) -> Result<IndexMap<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        display_path, eligible_trade_price, market_trade_duplicates_touch, project_root,
-        python_round_to_digits, python_round_to_i64, queue_penetration_available,
-        slippage_adjusted_price,
+        display_path, eligible_trade_price, market_trade_duplicates_touch, match_orders_for_symbol,
+        project_root, python_round_to_digits, python_round_to_i64, queue_penetration_available,
+        slippage_adjusted_price, BookLevel,
     };
-    use crate::model::MarketTrade;
+    use crate::model::{MarketTrade, MatchingConfig, Order};
+    use indexmap::IndexMap;
 
     #[test]
     fn queue_penetration_uses_bankers_rounding() {
@@ -1222,10 +1271,73 @@ mod tests {
         assert!(market_trade_duplicates_touch(&trade, Some(100), Some(104)));
 
         let off_touch = MarketTrade {
-            price: 98,
+            price: 101,
             ..trade
         };
         assert!(!market_trade_duplicates_touch(&off_touch, Some(100), Some(104)));
+
+        let through_ask = MarketTrade {
+            price: 106,
+            quantity: 4,
+            buyer: "SUBMISSION".to_string(),
+            seller: String::new(),
+            timestamp: 0,
+            symbol: "TOMATOES".to_string(),
+        };
+        assert!(market_trade_duplicates_touch(&through_ask, Some(100), Some(104)));
+    }
+
+    #[test]
+    fn same_price_market_trade_respects_visible_queue_ahead() {
+        let orders = vec![Order {
+            symbol: "TOMATOES".to_string(),
+            price: 100,
+            quantity: 4,
+        }];
+        let mut bids = vec![
+            BookLevel {
+                price: 100,
+                volume: 5,
+            },
+            BookLevel {
+                price: 99,
+                volume: 7,
+            },
+        ];
+        let mut asks = vec![BookLevel {
+            price: 105,
+            volume: 5,
+        }];
+        let market_trades = vec![MarketTrade {
+            symbol: "TOMATOES".to_string(),
+            price: 100,
+            quantity: 3,
+            buyer: String::new(),
+            seller: "BOT".to_string(),
+            timestamp: 0,
+        }];
+        let mut position = IndexMap::new();
+        let mut cash = IndexMap::new();
+        let config = MatchingConfig::default();
+        let (own_trades, remaining_market, order_rows) = match_orders_for_symbol(
+            "TOMATOES",
+            orders,
+            &mut bids,
+            &mut asks,
+            &market_trades,
+            &mut position,
+            &mut cash,
+            0,
+            &config,
+            true,
+        );
+
+        assert!(own_trades.is_empty());
+        assert!(remaining_market.is_empty());
+        assert_eq!(order_rows.len(), 1);
+        assert_eq!(order_rows[0].symbol, "TOMATOES");
+        assert_eq!(order_rows[0].price, 100);
+        assert_eq!(order_rows[0].quantity, 4);
     }
 
     #[test]
