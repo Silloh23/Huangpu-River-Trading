@@ -8,6 +8,47 @@ Everything needed for the default backtest flow now lives inside this directory.
 
 - `traders/latest_trader.py`
 
+## Setup
+
+Clone the repo:
+
+```bash
+git clone https://github.com/GeyzsoN/prosperity_rust_backtester.git
+cd prosperity_rust_backtester
+```
+
+### macOS
+
+Install the toolchain once:
+
+```bash
+xcode-select --install
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+python3 --version
+```
+
+Then either install the CLI:
+
+```bash
+make install
+```
+
+or just run the backtester directly:
+
+```bash
+make backtest
+```
+
+### Windows
+
+Use WSL2. Open an Ubuntu shell inside WSL2 and run the same commands there. Native Windows shells are not the target environment for this repo.
+
+There is no separate manual build step required for normal use:
+
+- `make backtest` and the other `make` run targets use `cargo run`, which builds automatically on first use
+- `make install` installs the CLI once so you can run `rust_backtester` directly afterward
+
 ## Included Data
 
 The repo is organized by round:
@@ -55,11 +96,6 @@ or:
 ```bash
 rust_backtester
 ```
-
-There is no separate manual build step required for normal use:
-
-- `make backtest` and the other `make` run targets use `cargo run`, which builds automatically on first use
-- `make install` installs the CLI once so you can run `rust_backtester` directly afterward
 
 Round-specific shortcuts:
 
@@ -166,36 +202,6 @@ PRODUCT        D-2        D-1        SUB
 TOM          70.00      77.20      29.10
 EMR          48.10      46.25      22.10
 ```
-
-## Install
-
-### macOS
-
-Install the toolchain once:
-
-```bash
-xcode-select --install
-curl https://sh.rustup.rs -sSf | sh
-source "$HOME/.cargo/env"
-python3 --version
-```
-
-Then from this repo:
-
-```bash
-make install
-```
-
-Alternative installs:
-
-```bash
-make install-pip
-make install-uv
-```
-
-### Windows
-
-Use WSL2. Open an Ubuntu shell inside WSL2 and run the same commands there. Native Windows shells are not the target environment for this repo.
 
 ### Bundled Targets
 
