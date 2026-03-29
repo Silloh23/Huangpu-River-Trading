@@ -352,13 +352,18 @@ fn resolve_trader(requested: Option<&Path>) -> Result<ResolvedTrader> {
 }
 
 fn resolve_dataset_input(requested: Option<&str>) -> Result<ResolvedDataset> {
+    resolve_dataset_input_with_root(requested, &project_root().join("datasets"))
+}
+
+fn resolve_dataset_input_with_root(
+    requested: Option<&str>,
+    datasets_root: &Path,
+) -> Result<ResolvedDataset> {
     let requested = requested.unwrap_or("latest");
     let normalized = requested.to_ascii_lowercase();
-    let datasets_root = project_root().join("datasets");
-    let latest_round = latest_round_root(&datasets_root)?;
 
     if let Some(round_name) = normalized.strip_suffix("-submission") {
-        let round_root = round_root_for_name(&datasets_root, round_name)?;
+        let round_root = round_root_for_name(datasets_root, round_name)?;
         return Ok(ResolvedDataset {
             roots: vec![round_submission_entry(&round_root)?],
             label: format!("{round_name}-sub"),
@@ -368,32 +373,38 @@ fn resolve_dataset_input(requested: Option<&str>) -> Result<ResolvedDataset> {
     }
 
     let resolved = match normalized.as_str() {
-        "latest" => ResolvedDataset {
-            roots: vec![latest_round.clone()],
-            label: short_round_label(&latest_round),
-            auto_selected: true,
-            exclude_submission_when_day_filtered: true,
-        },
+        "latest" => {
+            let latest_round = latest_round_root(datasets_root)?;
+            ResolvedDataset {
+                roots: vec![latest_round.clone()],
+                label: short_round_label(&latest_round),
+                auto_selected: true,
+                exclude_submission_when_day_filtered: true,
+            }
+        }
         "tutorial" | "tut" | "tutorial-round" | "tut-round" => ResolvedDataset {
             roots: vec![datasets_root.join("tutorial")],
             label: "tutorial".to_string(),
             auto_selected: false,
             exclude_submission_when_day_filtered: true,
         },
-        "round1" | "r1" => round_dataset(&datasets_root, "round1")?,
-        "round2" | "r2" => round_dataset(&datasets_root, "round2")?,
-        "round3" | "r3" => round_dataset(&datasets_root, "round3")?,
-        "round4" | "r4" => round_dataset(&datasets_root, "round4")?,
-        "round5" | "r5" => round_dataset(&datasets_root, "round5")?,
-        "round6" | "r6" => round_dataset(&datasets_root, "round6")?,
-        "round7" | "r7" => round_dataset(&datasets_root, "round7")?,
-        "round8" | "r8" => round_dataset(&datasets_root, "round8")?,
-        "submission" | "tutorial-submission" | "tut-sub" | "sub" => ResolvedDataset {
-            roots: vec![round_submission_entry(&latest_round)?],
-            label: "tut-sub".to_string(),
-            auto_selected: false,
-            exclude_submission_when_day_filtered: false,
-        },
+        "round1" | "r1" => round_dataset(datasets_root, "round1")?,
+        "round2" | "r2" => round_dataset(datasets_root, "round2")?,
+        "round3" | "r3" => round_dataset(datasets_root, "round3")?,
+        "round4" | "r4" => round_dataset(datasets_root, "round4")?,
+        "round5" | "r5" => round_dataset(datasets_root, "round5")?,
+        "round6" | "r6" => round_dataset(datasets_root, "round6")?,
+        "round7" | "r7" => round_dataset(datasets_root, "round7")?,
+        "round8" | "r8" => round_dataset(datasets_root, "round8")?,
+        "submission" | "tutorial-submission" | "tut-sub" | "sub" => {
+            let latest_round = latest_round_root(datasets_root)?;
+            ResolvedDataset {
+                roots: vec![round_submission_entry(&latest_round)?],
+                label: "tut-sub".to_string(),
+                auto_selected: false,
+                exclude_submission_when_day_filtered: false,
+            }
+        }
         "tutorial-1" | "tut-1" | "tut-d-1" => ResolvedDataset {
             roots: vec![round_day_entry(&datasets_root.join("tutorial"), -1)?],
             label: "tut-d-1".to_string(),
@@ -1106,13 +1117,15 @@ fn short_product_label(product: &str) -> &'static str {
 mod tests {
     use super::{
         ProductDisplayMode, ProductMatrix, ProductMatrixRow, SummaryRow, build_product_matrix,
-        collect_requested_days, merge_submission_logs, resolve_dataset_input, run_suffix,
-        short_dataset_label,
+        collect_requested_days, merge_submission_logs, resolve_dataset_input,
+        resolve_dataset_input_with_root, run_suffix, short_dataset_label,
     };
     use crate::model::{ArtifactSet, MatchingConfig, RunMetrics, RunOutput, load_dataset};
     use crate::runner::project_root;
     use indexmap::IndexMap;
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn product_split_formats_compact_table() {
@@ -1238,6 +1251,42 @@ mod tests {
         assert_eq!(dataset.label, "tutorial");
         assert_eq!(dataset.roots.len(), 1);
         assert!(dataset.auto_selected);
+    }
+
+    #[test]
+    fn explicit_dataset_path_does_not_require_populated_default_datasets_root() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos();
+        let scratch_root = std::env::temp_dir().join(format!(
+            "rust_backtester_cli_dataset_test_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let empty_datasets_root = scratch_root.join("datasets");
+        fs::create_dir_all(&empty_datasets_root).expect("scratch datasets root should exist");
+
+        let explicit_dataset = project_root().join("datasets/tutorial");
+        let explicit_dataset_str = explicit_dataset
+            .to_str()
+            .expect("explicit dataset path should be utf-8");
+
+        let dataset =
+            resolve_dataset_input_with_root(Some(explicit_dataset_str), &empty_datasets_root)
+                .expect("explicit dataset path should resolve without default datasets");
+
+        assert_eq!(
+            dataset.roots,
+            vec![
+                explicit_dataset
+                    .canonicalize()
+                    .expect("explicit dataset path should canonicalize")
+            ]
+        );
+        assert!(!dataset.auto_selected);
+
+        let _ = fs::remove_dir_all(scratch_root);
     }
 
     #[test]

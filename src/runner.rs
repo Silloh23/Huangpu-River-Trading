@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
@@ -380,11 +380,7 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
             ),
             (
                 "pnl_series",
-                Value::Array(if write_bundle {
-                    pnl_series
-                } else {
-                    Vec::new()
-                }),
+                Value::Array(if write_bundle { pnl_series } else { Vec::new() }),
             ),
         ]);
         let bundle_json = if write_bundle {
@@ -1260,9 +1256,9 @@ fn indexmap_f64_to_json(values: &IndexMap<String, f64>) -> Result<IndexMap<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        display_path, eligible_trade_price, market_trade_duplicates_touch, match_orders_for_symbol,
-        project_root, python_round_to_digits, python_round_to_i64, queue_penetration_available,
-        slippage_adjusted_price, BookLevel,
+        BookLevel, display_path, eligible_trade_price, market_trade_duplicates_touch,
+        match_orders_for_symbol, project_root, python_round_to_digits, python_round_to_i64,
+        queue_penetration_available, slippage_adjusted_price,
     };
     use crate::model::{MarketTrade, MatchingConfig, Order};
     use indexmap::IndexMap;
@@ -1303,7 +1299,11 @@ mod tests {
             price: 101,
             ..trade
         };
-        assert!(!market_trade_duplicates_touch(&off_touch, Some(100), Some(104)));
+        assert!(!market_trade_duplicates_touch(
+            &off_touch,
+            Some(100),
+            Some(104)
+        ));
 
         let through_ask = MarketTrade {
             price: 106,
@@ -1313,7 +1313,11 @@ mod tests {
             timestamp: 0,
             symbol: "TOMATOES".to_string(),
         };
-        assert!(market_trade_duplicates_touch(&through_ask, Some(100), Some(104)));
+        assert!(market_trade_duplicates_touch(
+            &through_ask,
+            Some(100),
+            Some(104)
+        ));
     }
 
     #[test]
