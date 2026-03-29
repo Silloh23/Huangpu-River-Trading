@@ -1256,9 +1256,10 @@ fn indexmap_f64_to_json(values: &IndexMap<String, f64>) -> Result<IndexMap<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        BookLevel, display_path, eligible_trade_price, market_trade_duplicates_touch,
-        match_orders_for_symbol, project_root, python_round_to_digits, python_round_to_i64,
-        queue_penetration_available, slippage_adjusted_price,
+        BookLevel, display_path, eligible_trade_price, enforce_position_limits,
+        market_trade_duplicates_touch, match_orders_for_symbol, project_root,
+        python_round_to_digits, python_round_to_i64, queue_penetration_available,
+        slippage_adjusted_price,
     };
     use crate::model::{MarketTrade, MatchingConfig, Order};
     use indexmap::IndexMap;
@@ -1371,6 +1372,73 @@ mod tests {
         assert_eq!(order_rows[0].symbol, "TOMATOES");
         assert_eq!(order_rows[0].price, 100);
         assert_eq!(order_rows[0].quantity, 4);
+    }
+
+    #[test]
+    fn product_specific_limits_allow_positions_up_to_cap() {
+        let position = IndexMap::from([
+            ("EMERALDS".to_string(), 75),
+            ("TOMATOES".to_string(), -75),
+        ]);
+        let orders_by_symbol = IndexMap::from([
+            (
+                "EMERALDS".to_string(),
+                vec![Order {
+                    symbol: "EMERALDS".to_string(),
+                    price: 10_000,
+                    quantity: 5,
+                }],
+            ),
+            (
+                "TOMATOES".to_string(),
+                vec![Order {
+                    symbol: "TOMATOES".to_string(),
+                    price: 5_000,
+                    quantity: -5,
+                }],
+            ),
+        ]);
+
+        let (filtered, messages) = enforce_position_limits(&position, orders_by_symbol);
+
+        assert!(messages.is_empty());
+        assert_eq!(filtered["EMERALDS"][0].quantity, 5);
+        assert_eq!(filtered["TOMATOES"][0].quantity, -5);
+    }
+
+    #[test]
+    fn product_specific_limits_reject_orders_beyond_cap() {
+        let position = IndexMap::from([
+            ("EMERALDS".to_string(), 75),
+            ("TOMATOES".to_string(), -75),
+        ]);
+        let orders_by_symbol = IndexMap::from([
+            (
+                "EMERALDS".to_string(),
+                vec![Order {
+                    symbol: "EMERALDS".to_string(),
+                    price: 10_000,
+                    quantity: 6,
+                }],
+            ),
+            (
+                "TOMATOES".to_string(),
+                vec![Order {
+                    symbol: "TOMATOES".to_string(),
+                    price: 5_000,
+                    quantity: -6,
+                }],
+            ),
+        ]);
+
+        let (filtered, messages) = enforce_position_limits(&position, orders_by_symbol);
+
+        assert!(filtered.is_empty());
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].contains("EMERALDS"));
+        assert!(messages[0].contains("80"));
+        assert!(messages[1].contains("TOMATOES"));
+        assert!(messages[1].contains("80"));
     }
 
     #[test]
